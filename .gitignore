@@ -4,3 +4,9 @@ build/
 .idea/
 local.properties
 .DS_Store
+
+# Built APK artifacts (release outputs copied here per deploy process) — never commit
+apk-files/
+*.apk
+*.jks
+*.keystore
