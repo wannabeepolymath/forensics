@@ -2,6 +2,8 @@ package com.forensics.core.handler.exif
 
 import com.forensics.core.io.InMemoryByteSource
 import com.forensics.core.model.EditPlan
+import com.forensics.core.model.FieldType
+import com.forensics.core.model.MetadataField
 import com.forensics.core.model.Value
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -53,5 +55,24 @@ class JpegExifHandlerEditTest {
         plan as EditPlan.InPlace
         assertEquals(field.byteLength, plan.newBytes.size) // padded to original length
         assertEquals(0.toByte(), plan.newBytes.last())      // NUL padding
+    }
+
+    @Test fun readOnlyFieldRejected() {
+        val src = source()
+        // A synthetic non-editable field: the engine must refuse to edit it (fail closed).
+        val readOnly = MetadataField(
+            key = "Locked", value = Value.Raw(byteArrayOf(1, 2)),
+            byteOffset = 100, byteLength = 2,
+            type = FieldType.FIXED, editable = false, group = "EXIF",
+        )
+        val plan = handler.validateEdit(src, readOnly, Value.Integer(3))
+        assertTrue(plan is EditPlan.Rejected)
+    }
+
+    @Test fun rawValueRejected() {
+        val src = source()
+        val field = handler.parse(src).first { it.key == "Make" } // editable field
+        val plan = handler.validateEdit(src, field, Value.Raw(byteArrayOf(9, 9)))
+        assertTrue(plan is EditPlan.Rejected)
     }
 }
