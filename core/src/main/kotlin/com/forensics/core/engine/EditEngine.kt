@@ -74,12 +74,19 @@ class EditEngine(private val handler: FormatHandler) {
         sink: ByteSink, valueOffset: Long, undoValue: ByteArray,
         undoChecksums: List<Pair<Long, ByteArray>>, reason: String,
     ): EditResult {
-        runCatching {
+        val restored = runCatching {
             sink.writeAt(valueOffset, undoValue)
             undoChecksums.forEach { (off, bytes) -> sink.writeAt(off, bytes) }
             sink.force()
         }
-        return EditResult.Failure(reason)
+        // If the undo write itself fails, the file may be left modified. The caller's
+        // "file is unchanged" contract no longer holds, so surface it loudly in the reason
+        // rather than swallowing it — a UI must be able to warn the user.
+        return EditResult.Failure(
+            restored.exceptionOrNull()
+                ?.let { "$reason; WARNING: restore ALSO failed, file may be corrupted: ${it.message}" }
+                ?: reason,
+        )
     }
 
     private fun applyRewrite(
@@ -102,14 +109,20 @@ class EditEngine(private val handler: FormatHandler) {
             sink.force()
             val reparsed = handler.parse(currentSource(sink))
             val ok = reparsed.firstOrNull { it.key == field.key }?.value == expected
-            if (!ok) {
-                sink.rewrite(undoWhole.inputStream()); sink.force()
-                return EditResult.Failure("post-rewrite verification failed")
-            }
+            if (!ok) return restoreWhole(sink, undoWhole, "post-rewrite verification failed")
             return EditResult.Success(inPlace = false, bytesPatched = plan.rebuiltBytes.size)
         } catch (t: Throwable) {
-            runCatching { sink.rewrite(undoWhole.inputStream()); sink.force() }
-            return EditResult.Failure("rewrite error: ${t.message}")
+            return restoreWhole(sink, undoWhole, "rewrite error: ${t.message}")
         }
+    }
+
+    /** Best-effort whole-file restore; surfaces a restore failure in the reason (see [restore]). */
+    private fun restoreWhole(sink: ByteSink, undoWhole: ByteArray, reason: String): EditResult {
+        val restored = runCatching { sink.rewrite(undoWhole.inputStream()); sink.force() }
+        return EditResult.Failure(
+            restored.exceptionOrNull()
+                ?.let { "$reason; WARNING: restore ALSO failed, file may be corrupted: ${it.message}" }
+                ?: reason,
+        )
     }
 }
