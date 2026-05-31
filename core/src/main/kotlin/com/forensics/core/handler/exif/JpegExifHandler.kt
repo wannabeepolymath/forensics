@@ -93,6 +93,52 @@ class JpegExifHandler : FormatHandler {
         return fields
     }
 
-    override fun validateEdit(source: ByteSource, field: MetadataField, newValue: Value): EditPlan =
-        EditPlan.Rejected("editing not yet implemented") // implemented in Task 16
+    override fun validateEdit(source: ByteSource, field: MetadataField, newValue: Value): EditPlan {
+        if (!field.editable) return EditPlan.Rejected("field is read-only")
+        val bytes = source.readAt(0, source.size().toInt())
+        val tiffBase = findTiffBase(bytes)
+        if (tiffBase < 0) return EditPlan.Rejected("no EXIF block")
+        val littleEndian = String(bytes, tiffBase, 2, Charsets.US_ASCII) == "II"
+        val tiff = TiffReader(bytes, littleEndian) // for encodeU16 in this byte order
+
+        return when (val v = newValue) {
+            is Value.Integer -> {
+                if (field.byteLength != 2) return EditPlan.Rejected("unsupported integer field width")
+                if (field.key == "Orientation" && v.n !in 1..8)
+                    return EditPlan.Rejected("Orientation must be 1..8")
+                if (v.n !in 0..0xFFFF) return EditPlan.Rejected("value out of SHORT range")
+                val original = source.readAt(field.byteOffset, field.byteLength)
+                val newBytes = tiff.encodeU16(v.n.toInt())
+                EditPlan.InPlace(field.byteOffset, original, newBytes)
+            }
+            is Value.Text -> {
+                val encoded = v.s.toByteArray(Charsets.US_ASCII)
+                val capacity = field.byteLength // includes the NUL/pad terminator slot
+                when {
+                    encoded.size + 1 > capacity ->
+                        EditPlan.RequiresRewrite(
+                            "new text is longer than the original field",
+                            rebuildWithText(bytes, field, v.s),
+                        )
+                    else -> {
+                        val original = source.readAt(field.byteOffset, field.byteLength)
+                        val padded = ByteArray(capacity) // zero-filled => NUL padding
+                        System.arraycopy(encoded, 0, padded, 0, encoded.size)
+                        EditPlan.InPlace(field.byteOffset, original, padded)
+                    }
+                }
+            }
+            is Value.Raw -> EditPlan.Rejected("raw fields are not editable in v1")
+        }
+    }
+
+    /**
+     * Rebuilds the whole file with [field]'s ASCII value replaced by [text].
+     * v1: a real TIFF rebuild is a scoped follow-on. This safe stub returns the ORIGINAL bytes
+     * unchanged, so the EditEngine's structural re-parse + value re-check (Task 18) detects that
+     * the value did not actually change and reports Failure — i.e. it fails CLOSED, never corrupts.
+     */
+    private fun rebuildWithText(original: ByteArray, field: MetadataField, text: String): ByteArray {
+        return original.copyOf()
+    }
 }
