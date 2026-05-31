@@ -46,7 +46,7 @@ class JpegExifHandler : FormatHandler {
         val littleEndian = String(bytes, tiffBase, 2, Charsets.US_ASCII) == "II"
         val tiff = TiffReader(bytes.copyOfRange(tiffBase, bytes.size), littleEndian)
         val ifd0 = tiff.u32(4).toInt()
-        if (ifd0 < 0 || ifd0 + 2 > tiff.data.size) return emptyList()
+        if (ifd0 < 0 || ifd0.toLong() + 2 > tiff.data.size) return emptyList()
 
         val count = tiff.u16(ifd0)
         val fields = ArrayList<MetadataField>()
