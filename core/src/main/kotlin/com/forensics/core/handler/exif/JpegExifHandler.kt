@@ -35,7 +35,10 @@ class JpegExifHandler : FormatHandler {
         return -1
     }
 
-    override fun parse(source: ByteSource): List<MetadataField> {
+    override fun parse(source: ByteSource): List<MetadataField> =
+        runCatching { parseInternal(source) }.getOrDefault(emptyList())
+
+    private fun parseInternal(source: ByteSource): List<MetadataField> {
         val bytes = source.readAt(0, source.size().toInt())
         val tiffBase = findTiffBase(bytes)
         if (tiffBase < 0 || tiffBase + 8 > bytes.size) return emptyList()
@@ -43,7 +46,7 @@ class JpegExifHandler : FormatHandler {
         val littleEndian = String(bytes, tiffBase, 2, Charsets.US_ASCII) == "II"
         val tiff = TiffReader(bytes.copyOfRange(tiffBase, bytes.size), littleEndian)
         val ifd0 = tiff.u32(4).toInt()
-        if (ifd0 + 2 > tiff.data.size) return emptyList()
+        if (ifd0 < 0 || ifd0 + 2 > tiff.data.size) return emptyList()
 
         val count = tiff.u16(ifd0)
         val fields = ArrayList<MetadataField>()
@@ -53,9 +56,13 @@ class JpegExifHandler : FormatHandler {
             val tag = tiff.u16(entry)
             val type = ExifType.fromCode(tiff.u16(entry + 2)) ?: continue
             val valueCount = tiff.u32(entry + 4).toInt()
-            val totalBytes = type.byteSize * valueCount
+            if (valueCount < 0) continue
+            // Long math avoids 32-bit overflow from adversarial counts.
+            val totalBytes = type.byteSize.toLong() * valueCount
+            if (totalBytes < 0 || totalBytes > tiff.data.size) continue
+            val totalBytesInt = totalBytes.toInt()
             val valueLocalOffset = if (totalBytes <= 4) entry + 8 else tiff.u32(entry + 8).toInt()
-            if (valueLocalOffset + totalBytes > tiff.data.size) continue
+            if (valueLocalOffset < 0 || valueLocalOffset.toLong() + totalBytes > tiff.data.size) continue
 
             val absoluteOffset = (tiffBase + valueLocalOffset).toLong()
             val field = when (type) {
@@ -72,19 +79,19 @@ class JpegExifHandler : FormatHandler {
                     type = FieldType.FIXED, editable = true, group = "EXIF",
                 )
                 ExifType.ASCII -> {
-                    val raw = tiff.data.copyOfRange(valueLocalOffset, valueLocalOffset + totalBytes)
-                    val text = String(raw, Charsets.US_ASCII).trimEnd(' ')
+                    val raw = tiff.data.copyOfRange(valueLocalOffset, valueLocalOffset + totalBytesInt)
+                    val text = String(raw, Charsets.US_ASCII).trimEnd(' ', '\u0000')
                     MetadataField(
                         key = ExifTags.name(tag),
                         value = Value.Text(text),
-                        byteOffset = absoluteOffset, byteLength = totalBytes,
+                        byteOffset = absoluteOffset, byteLength = totalBytesInt,
                         type = FieldType.FIXED, editable = true, group = "EXIF",
                     )
                 }
                 ExifType.BYTE -> MetadataField(
                     key = ExifTags.name(tag),
-                    value = Value.Raw(tiff.data.copyOfRange(valueLocalOffset, valueLocalOffset + totalBytes)),
-                    byteOffset = absoluteOffset, byteLength = totalBytes,
+                    value = Value.Raw(tiff.data.copyOfRange(valueLocalOffset, valueLocalOffset + totalBytesInt)),
+                    byteOffset = absoluteOffset, byteLength = totalBytesInt,
                     type = FieldType.FIXED, editable = false, group = "EXIF",
                 )
             }
