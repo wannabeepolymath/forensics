@@ -160,10 +160,16 @@ keystore**, set up once:
    ./gradlew :app:assembleRelease
    # -> app/build/outputs/apk/release/app-release.apk
    ```
-3. **Copy a user-friendly named build into `apk-files/`** (gitignored, so this never gets committed):
+3. **Copy a user-friendly named build into `apk-files/`** (gitignored, so this never gets committed).
+   This derives the version from `build.gradle.kts` and grabs whichever release APK was produced
+   (`app-release.apk` when signed, `app-release-unsigned.apk` before the keystore is set up), so you
+   never hand-edit the names:
    ```bash
-   cp app/build/outputs/apk/release/app-release.apk apk-files/forensics-v0.2.0.apk
+   VERSION=$(sed -n 's/.*versionName *= *"\([^"]*\)".*/\1/p' app/build.gradle.kts)
+   cp app/build/outputs/apk/release/app-release*.apk "apk-files/forensics-v${VERSION}.apk"
    ```
+   (If both a signed and an unsigned APK are present from earlier builds, `rm` the stale one first,
+   or name the exact file — `cp` can't copy two sources onto one destination.)
 4. **Commit the version bump, tag, and push:**
    ```bash
    git commit -am "bump to 0.2.0"
