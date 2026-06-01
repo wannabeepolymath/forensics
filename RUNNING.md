@@ -91,6 +91,100 @@ You need a device to run on. Pick **one** of the three paths below.
 
 ---
 
+## Deploying a release build (signed APK → `apk-files/`)
+
+This produces a **signed release APK** and parks a user-friendly copy in `apk-files/`.
+`apk-files/`, `*.apk`, `*.jks`, `*.keystore` are gitignored — **build artifacts and the keystore
+are never committed.**
+
+> Adapted from the local `must_read.md` note (its `gps-simulator` / `android/...` paths are
+> examples). This repo's app module is `:app` at the **repo root**, so the release APK lands at
+> `app/build/outputs/apk/release/app-release.apk` (no `android/` prefix).
+
+### One-time signing setup (required before the first release)
+The debug builds above are auto-signed with a throwaway debug key. A release APK needs **your own
+keystore**, set up once:
+
+1. **Generate a release keystore** (keep it OUTSIDE the repo):
+   ```bash
+   keytool -genkeypair -v \
+     -keystore ~/.forensics-release.jks \
+     -alias forensics -keyalg RSA -keysize 2048 -validity 10000
+   ```
+   ⚠️ **Back this file up off-machine and remember the passwords.** Lose the keystore and you can
+   never ship an update that overwrites an installed copy — Android requires the same signing key.
+
+2. **Put the credentials in your *global* Gradle props** (`~/.gradle/gradle.properties`, never the
+   repo — it's outside version control):
+   ```properties
+   FORENSICS_KEYSTORE=/Users/daksh/.forensics-release.jks
+   FORENSICS_KEYSTORE_PASSWORD=********
+   FORENSICS_KEY_ALIAS=forensics
+   FORENSICS_KEY_PASSWORD=********
+   ```
+
+3. **Wire the signing config into `app/build.gradle.kts`** (one-time edit) — add a `release`
+   signing config that reads those props, and point the `release` build type at it:
+   ```kotlin
+   android {
+       signingConfigs {
+           create("release") {
+               val ksPath = project.findProperty("FORENSICS_KEYSTORE") as String?
+               if (ksPath != null) {
+                   storeFile = file(ksPath)
+                   storePassword = project.findProperty("FORENSICS_KEYSTORE_PASSWORD") as String?
+                   keyAlias = project.findProperty("FORENSICS_KEY_ALIAS") as String?
+                   keyPassword = project.findProperty("FORENSICS_KEY_PASSWORD") as String?
+               }
+           }
+       }
+       buildTypes {
+           release {
+               signingConfig = signingConfigs.getByName("release")
+               isMinifyEnabled = false   // no shrinker configured yet
+           }
+       }
+   }
+   ```
+   (Until this is added, `assembleRelease` builds an **unsigned** APK that won't install.)
+
+### Per-release ritual (~3 min each ship)
+1. **Bump the version** in `app/build.gradle.kts` (`defaultConfig`):
+   ```kotlin
+   versionCode = 2          // currently 1 — must STRICTLY increase or Android rejects the update
+   versionName = "0.2.0"    // currently "0.1.0" — must equal the git tag minus the leading "v"
+   ```
+2. **Build the signed release APK** (JDK 17, from the repo root):
+   ```bash
+   export JAVA_HOME=$(/usr/libexec/java_home -v 17)
+   ./gradlew :app:assembleRelease
+   # -> app/build/outputs/apk/release/app-release.apk
+   ```
+3. **Copy a user-friendly named build into `apk-files/`** (gitignored, so this never gets committed):
+   ```bash
+   cp app/build/outputs/apk/release/app-release.apk apk-files/forensics-v0.2.0.apk
+   ```
+4. **Commit the version bump, tag, and push:**
+   ```bash
+   git commit -am "bump to 0.2.0"
+   git tag v0.2.0
+   git push && git push --tags
+   ```
+
+### Release gotchas
+- **`versionCode` must strictly increase** every release, or a device refuses to install it over
+  an existing copy.
+- **Tag must equal `v` + `versionName`** (e.g. `versionName "0.2.0"` → tag `v0.2.0`). This keeps the
+  convention an in-app update check would rely on (that updater isn't built yet — it's planned).
+- **Never commit or lose the keystore** (`~/.forensics-release.jks`). Off-machine backup. Losing it
+  means you can never update an installed build.
+- Install/verify a release APK like any other:
+  ```bash
+  adb install -r app/build/outputs/apk/release/app-release.apk
+  ```
+
+---
+
 ## Stopping & cleanup
 
 ### Stop the running app
