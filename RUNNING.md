@@ -91,6 +91,44 @@ You need a device to run on. Pick **one** of the three paths below.
 
 ---
 
+## Stopping & cleanup
+
+### Stop the running app
+- **Android Studio:** click the red **Stop** ■ button in the toolbar (or *Run ▸ Stop 'app'*).
+- **Terminal (device/emulator):**
+  ```bash
+  adb shell am force-stop com.forensics.app
+  ```
+
+### Uninstall the app
+```bash
+adb uninstall com.forensics.app
+# or, via Gradle:
+export JAVA_HOME=$(/usr/libexec/java_home -v 17)
+./gradlew :app:uninstallDebug
+```
+
+### Stop the emulator
+- **Android Studio:** close the emulator window, or *Device Manager* → ▾ → **Stop**.
+- **Terminal:** kill the running emulator instance:
+  ```bash
+  adb emu kill          # stops the currently running emulator
+  adb devices           # confirm it's gone
+  ```
+
+### Stop a build / the Gradle daemon
+- A running build in the terminal: press **Ctrl+C**.
+- Shut down the background Gradle daemon (frees memory):
+  ```bash
+  export JAVA_HOME=$(/usr/libexec/java_home -v 17)
+  ./gradlew --stop
+  ```
+
+### Disconnect a USB device
+Just unplug it. To fully reset the adb connection: `adb kill-server`.
+
+---
+
 ## Troubleshooting
 - **`adb devices` empty / "unauthorized":** replug USB, accept the on-phone prompt; try
   `adb kill-server && adb start-server`.
