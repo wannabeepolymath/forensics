@@ -35,6 +35,7 @@ fun ForensicsScreen(
     classify: (MetadataField, Value) -> EditClassification,
     onApplyEdit: (MetadataField, Value) -> Unit,
     onFocusBytes: (Long, Int) -> Unit,
+    onStringsFilter: (query: String, minLen: Int) -> Unit,
 ) {
     var editing by remember { mutableStateOf<MetadataField?>(null) }
     var tab by remember { mutableIntStateOf(0) }
@@ -87,7 +88,14 @@ fun ForensicsScreen(
                     focusLength = state.focusLength,
                     fileSize = state.identity?.sizeBytes ?: 0L,
                 )
-                else -> StringsView(state.strings, state.stringsTruncated, onJump = focusInHex)
+                else -> StringsView(
+                    strings = state.strings,
+                    truncated = state.stringsTruncated,
+                    query = state.stringsQuery,
+                    minLen = state.stringsMinLen,
+                    onFilterChange = onStringsFilter,
+                    onJump = focusInHex,
+                )
             }
         }
     }

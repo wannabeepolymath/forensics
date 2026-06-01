@@ -1,18 +1,25 @@
 package com.forensics.app.ui
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
@@ -97,19 +104,46 @@ fun HexView(
 
 /**
  * Extracted ASCII strings, each tagged with the absolute offset where it was found. Tapping a row
- * jumps the hex view to that offset. [truncated] flags that the list was capped.
+ * jumps the hex view to that offset. A pinned header carries a substring filter and a min-length
+ * stepper; both feed [onFilterChange], which re-scans the whole file (not just the loaded rows).
+ * [truncated] flags that the match list was capped.
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun StringsView(
     strings: List<FoundString>,
     truncated: Boolean,
+    query: String,
+    minLen: Int,
+    onFilterChange: (query: String, minLen: Int) -> Unit,
     onJump: (offset: Long, length: Int) -> Unit,
 ) {
     LazyColumn(Modifier.fillMaxWidth()) {
-        item {
-            val label = if (truncated) "Strings · showing first ${strings.size} (more not shown) · tap to locate"
-            else "Strings · ${strings.size} found · tap to locate"
-            Text(label, Modifier.padding(8.dp), style = MaterialTheme.typography.bodySmall)
+        stickyHeader {
+            Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface).padding(8.dp)) {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { onFilterChange(it, minLen) },
+                    label = { Text("Filter strings") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp)) {
+                    Text("min length: $minLen", style = MaterialTheme.typography.bodySmall)
+                    Spacer(Modifier.width(8.dp))
+                    TextButton(
+                        onClick = { onFilterChange(query, (minLen - 1).coerceAtLeast(1)) },
+                        enabled = minLen > 1,
+                    ) { Text("−") }
+                    TextButton(
+                        onClick = { onFilterChange(query, (minLen + 1).coerceAtMost(32)) },
+                        enabled = minLen < 32,
+                    ) { Text("+") }
+                    Spacer(Modifier.width(8.dp))
+                    val label = if (truncated) "first ${strings.size} (capped)" else "${strings.size} matches"
+                    Text(label, style = MaterialTheme.typography.bodySmall)
+                }
+            }
         }
         items(strings) { s ->
             Text(
@@ -121,6 +155,15 @@ fun StringsView(
                     .clickable { onJump(s.offset, s.text.length) }
                     .padding(horizontal = 8.dp, vertical = 2.dp),
             )
+        }
+        if (strings.isEmpty()) {
+            item {
+                Text(
+                    "No strings match.",
+                    Modifier.padding(8.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
         }
     }
 }

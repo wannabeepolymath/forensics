@@ -24,11 +24,16 @@ class MainActivity : ComponentActivity() {
                 ActivityResultContracts.OpenDocument(),
             ) { uri ->
                 if (uri != null) {
-                    contentResolver.takePersistableUriPermission(
-                        uri,
-                        android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or
-                            android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
-                    )
+                    // With an "*/*" picker some files come from read-only providers that never
+                    // granted write — persisting rw would throw. Try rw (needed for in-place edits),
+                    // fall back to read-only so inspection still works and picking never crashes.
+                    val read = android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    val write = android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                    try {
+                        contentResolver.takePersistableUriPermission(uri, read or write)
+                    } catch (_: SecurityException) {
+                        runCatching { contentResolver.takePersistableUriPermission(uri, read) }
+                    }
                     vm.open(uri)
                 }
             }
@@ -36,10 +41,11 @@ class MainActivity : ComponentActivity() {
                 Surface {
                     ForensicsScreen(
                         state = state,
-                        onPick = { picker.launch(arrayOf("image/jpeg")) },
+                        onPick = { picker.launch(arrayOf("*/*")) },
                         classify = { field, value -> vm.preview(field, value) },
                         onApplyEdit = { field, value -> vm.applyEdit(field, value) },
                         onFocusBytes = { offset, length -> vm.focusBytes(offset, length) },
+                        onStringsFilter = { query, minLen -> vm.setStringsFilter(query, minLen) },
                     )
                 }
             }

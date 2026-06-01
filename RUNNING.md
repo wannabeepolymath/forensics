@@ -138,8 +138,9 @@ Just unplug it. To fully reset the adb connection: `adb kill-server`.
   `sdk.dir=/Users/daksh/Library/Android/sdk`.
 - **Picked image shows no EXIF fields:** that file has no EXIF (still shows filesystem
   info + Hex + Strings). Try a real camera photo.
-- **Picker only shows JPEGs:** intentional for now (`launch(arrayOf("image/jpeg"))` in
-  `MainActivity`); broaden the MIME filter to add formats later.
+- **Editing only works on JPEGs with EXIF:** the picker now opens any file (`*/*`) so you can
+  inspect filesystem metadata + hex + strings on anything, but in-place metadata *edits* currently
+  need the JPEG/EXIF handler. Other formats are read-only until more handlers land.
 - **First emulator boot is slow** — give it a minute.
 
 Fastest route from a clean machine: **Path A** (Android Studio is installed; it creates the

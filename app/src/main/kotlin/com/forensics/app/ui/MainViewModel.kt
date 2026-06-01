@@ -18,10 +18,12 @@ import com.forensics.core.generic.HexDump
 import com.forensics.core.generic.HexFocus
 import com.forensics.core.generic.Strings
 import com.forensics.core.handler.exif.JpegExifHandler
+import com.forensics.core.io.ByteSource
 import com.forensics.core.model.EditResult
 import com.forensics.core.model.MetadataField
 import com.forensics.core.model.Value
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -38,8 +40,12 @@ data class UiState(
     /** Absolute file offset of the first byte of [hexLines]; lets the hex view label real offsets. */
     val hexPageStart: Long = 0,
     val strings: List<FoundString> = emptyList(),
-    /** True when more than [STRINGS_LIMIT] strings exist and the list was capped. */
+    /** True when more than [STRINGS_LIMIT] matches exist and the list was capped. */
     val stringsTruncated: Boolean = false,
+    /** Current case-insensitive substring filter applied to extracted strings (blank = no filter). */
+    val stringsQuery: String = "",
+    /** Minimum run length for the strings extractor. */
+    val stringsMinLen: Int = DEFAULT_MIN_STRING_LEN,
     /** Byte range to spotlight in the hex view (from a tapped field/string); null = nothing focused. */
     val focusOffset: Long? = null,
     val focusLength: Int = 0,
@@ -49,12 +55,28 @@ data class UiState(
 
 private const val HEX_PREVIEW_BYTES = 4096
 private const val STRINGS_LIMIT = 200
+private const val DEFAULT_MIN_STRING_LEN = 4
+
+/**
+ * Streams [source] for printable runs of at least [minLen], keeps those matching [query]
+ * (case-insensitive substring; blank = all), and caps at [STRINGS_LIMIT]. Pulls one extra to detect
+ * the cap. Filtering happens during extraction so it covers the WHOLE file, not just a loaded slice,
+ * while memory stays bounded regardless of file size.
+ */
+private fun extractStrings(source: ByteSource, minLen: Int, query: String): Pair<List<FoundString>, Boolean> {
+    val matches = Strings.extract(source, minLen.coerceAtLeast(1))
+        .filter { query.isBlank() || it.text.contains(query, ignoreCase = true) }
+        .take(STRINGS_LIMIT + 1)
+        .toList()
+    return matches.take(STRINGS_LIMIT) to (matches.size > STRINGS_LIMIT)
+}
 
 class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val controller = MetadataController(listOf(JpegExifHandler()))
     private val _state = MutableStateFlow(UiState())
     val state: StateFlow<UiState> = _state.asStateFlow()
     private var currentUri: Uri? = null
+    private var stringsJob: Job? = null
 
     fun open(uri: Uri) {
         currentUri = uri
@@ -68,8 +90,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     val source = PfdByteSource(pfd)
                     val inspection = controller.inspect(source)
                     val hex = HexDump.page(source, 0, HEX_PREVIEW_BYTES)
-                    // Pull one extra so we can tell the user the list was capped without counting all.
-                    val foundStrings = Strings.extract(source, 4).take(STRINGS_LIMIT + 1).toList()
+                    val (strings, truncated) = extractStrings(source, DEFAULT_MIN_STRING_LEN, query = "")
                     UiState(
                         identity = identity,
                         handlerName = inspection.handlerName,
@@ -81,12 +102,36 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         sha256 = inspection.sha256,
                         hexLines = hex,
                         hexPageStart = 0,
-                        strings = foundStrings.take(STRINGS_LIMIT),
-                        stringsTruncated = foundStrings.size > STRINGS_LIMIT,
+                        strings = strings,
+                        stringsTruncated = truncated,
                     )
                 }
             }
             _state.value = next
+        }
+    }
+
+    /**
+     * Re-extract strings with a new substring [query] and/or [minLen]. Reflects the control change
+     * in state immediately, then re-scans the file off the main thread, cancelling any in-flight scan
+     * so rapid keystrokes can't land stale results out of order.
+     */
+    fun setStringsFilter(
+        query: String = _state.value.stringsQuery,
+        minLen: Int = _state.value.stringsMinLen,
+    ) {
+        val uri = currentUri ?: return
+        _state.value = _state.value.copy(stringsQuery = query, stringsMinLen = minLen)
+        stringsJob?.cancel()
+        stringsJob = viewModelScope.launch {
+            val (strings, truncated) = withContext(Dispatchers.IO) {
+                val ctx = getApplication<Application>()
+                ctx.contentResolver.openFileDescriptor(uri, "r").use { pfd ->
+                    requireNotNull(pfd) { "could not open file" }
+                    extractStrings(PfdByteSource(pfd), minLen, query)
+                }
+            }
+            _state.value = _state.value.copy(strings = strings, stringsTruncated = truncated)
         }
     }
 
