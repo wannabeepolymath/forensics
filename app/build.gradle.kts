@@ -12,8 +12,8 @@ android {
         applicationId = "com.forensics.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "1.0.0"
     }
 
     compileOptions {
@@ -29,6 +29,33 @@ android {
 
     buildFeatures {
         compose = true
+    }
+
+    signingConfigs {
+        create("release") {
+            // Credentials come from the GLOBAL ~/.gradle/gradle.properties (never committed):
+            //   FORENSICS_KEYSTORE, FORENSICS_KEYSTORE_PASSWORD, FORENSICS_KEY_ALIAS, FORENSICS_KEY_PASSWORD
+            // Absent (fresh clone / CI) => release stays unsigned instead of failing configuration.
+            val ksPath = project.findProperty("FORENSICS_KEYSTORE") as String?
+            if (ksPath != null) {
+                storeFile = file(ksPath)
+                storePassword = project.findProperty("FORENSICS_KEYSTORE_PASSWORD") as String?
+                keyAlias = project.findProperty("FORENSICS_KEY_ALIAS") as String?
+                keyPassword = project.findProperty("FORENSICS_KEY_PASSWORD") as String?
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            // Attach the release signing config only when a keystore is actually configured, so
+            // `assembleRelease` on a machine without creds produces an (unsigned) APK rather than
+            // erroring on a half-populated signing config.
+            if (project.findProperty("FORENSICS_KEYSTORE") != null) {
+                signingConfig = signingConfigs.getByName("release")
+            }
+            isMinifyEnabled = false // no shrinker/proguard configured yet
+        }
     }
 
     sourceSets["main"].kotlin.srcDir("src/main/kotlin")
