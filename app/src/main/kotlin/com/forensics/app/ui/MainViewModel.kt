@@ -8,6 +8,7 @@ import com.forensics.app.io.PfdByteSink
 import com.forensics.app.io.PfdByteSource
 import com.forensics.app.meta.AndroidFileMetadata
 import com.forensics.app.meta.FileIdentity
+import com.forensics.app.meta.FileIdentityFields
 import com.forensics.core.app.EditClassification
 import com.forensics.core.app.FieldGroup
 import com.forensics.core.app.MetadataController
@@ -62,7 +63,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     UiState(
                         identity = identity,
                         handlerName = inspection.handlerName,
-                        groups = MetadataGrouping.group(inspection.fields),
+                        // Always show generic filesystem metadata + hashes, then any handler fields,
+                        // so the metadata view is never empty for a valid file (e.g. a JPEG with no EXIF).
+                        groups = listOf(FileIdentityFields.toGroup(identity, inspection.md5, inspection.sha256)) +
+                            MetadataGrouping.group(inspection.fields),
                         md5 = inspection.md5,
                         sha256 = inspection.sha256,
                         hexLines = hex,
