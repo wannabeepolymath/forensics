@@ -29,6 +29,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.FileNotFoundException
 
 data class UiState(
     val identity: FileIdentity? = null,
@@ -178,20 +179,37 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val uri = currentUri ?: return
         viewModelScope.launch {
             _state.value = _state.value.copy(busy = true, message = null)
-            val outcome = withContext(Dispatchers.IO) {
-                val ctx = getApplication<Application>()
-                ctx.contentResolver.openFileDescriptor(uri, "rw").use { pfd ->
-                    requireNotNull(pfd) { "could not open file for writing" }
-                    controller.edit(PfdByteSink(pfd), PfdByteSource(pfd), field, newValue)
+            // Opening "rw" can THROW for read-only-granted URIs (cloud/Photos/screenshot providers),
+            // not just return an EditResult.Failure. Catch everything so the user always gets a
+            // visible, actionable message instead of a silently stuck spinner.
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    val ctx = getApplication<Application>()
+                    ctx.contentResolver.openFileDescriptor(uri, "rw").use { pfd ->
+                        requireNotNull(pfd) { "could not open file for writing" }
+                        controller.edit(PfdByteSink(pfd), PfdByteSource(pfd), field, newValue)
+                    }
                 }
             }
-            val msg = when (outcome) {
-                is EditResult.Success ->
+            val outcome = result.getOrNull()
+            val msg = when {
+                outcome is EditResult.Success ->
                     if (outcome.inPlace) "Patched ${outcome.bytesPatched} bytes in place ✓" else "Rewrote file ✓"
-                is EditResult.Failure -> "Edit failed: ${outcome.reason}"
+                outcome is EditResult.Failure -> "Edit failed: ${outcome.reason}"
+                else -> "Edit failed: ${writeErrorHint(result.exceptionOrNull())}"
             }
             _state.value = _state.value.copy(busy = false, message = msg)
-            open(uri)
+            // Only refresh from disk on success — a failed edit shouldn't clobber the user's
+            // current strings filter / hex focus.
+            if (outcome is EditResult.Success) open(uri)
         }
+    }
+
+    /** Turns a write-time exception into a human hint; read-only access is the common cause. */
+    private fun writeErrorHint(e: Throwable?): String = when (e) {
+        is SecurityException, is FileNotFoundException, is UnsupportedOperationException ->
+            "this file is read-only — copy it into local storage/Downloads and open that to edit"
+        null -> "unknown error"
+        else -> e.message ?: e.javaClass.simpleName
     }
 }

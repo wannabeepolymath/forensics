@@ -116,7 +116,18 @@ private fun MetadataTab(
     onEdit: (MetadataField) -> Unit,
     onFocusBytes: (Long, Int) -> Unit,
 ) {
+    val anyEditable = groups.any { g -> g.fields.any { it.editable } }
     LazyColumn(Modifier.fillMaxWidth()) {
+        if (!anyEditable) {
+            item {
+                Text(
+                    "No editable metadata in this file. In-place editing currently supports EXIF " +
+                        "tags in JPEGs — open a camera/phone photo (not a screenshot) to edit.",
+                    Modifier.padding(vertical = 8.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+        }
         groups.forEach { group ->
             item {
                 Text(
