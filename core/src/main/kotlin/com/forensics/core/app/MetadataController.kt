@@ -7,6 +7,7 @@ import com.forensics.core.engine.Guard
 import com.forensics.core.handler.FormatHandler
 import com.forensics.core.io.ByteSink
 import com.forensics.core.io.ByteSource
+import com.forensics.core.model.EditPlan
 import com.forensics.core.model.EditResult
 import com.forensics.core.model.MetadataField
 import com.forensics.core.model.Value
@@ -33,6 +34,21 @@ class MetadataController(private val handlers: List<FormatHandler>) {
             .getOrElse { return EditResult.Failure("could not compile edit: ${it.message}") }
         val guard = Guard.capture(source)
         return EditEngine(handler).apply(sink, plan, guard, field, newValue)
+    }
+
+    /**
+     * Classifies what an edit of [field] to [newValue] WOULD do, WITHOUT writing anything.
+     * Drives editability badges and the rewrite-consent dialog.
+     */
+    fun previewEdit(source: ByteSource, field: MetadataField, newValue: Value): EditClassification {
+        val handler = matchHandler(source)
+            ?: return EditClassification.Rejected("no handler recognizes this file")
+        return when (val plan = runCatching { handler.validateEdit(source, field, newValue) }
+            .getOrElse { return EditClassification.Rejected("could not classify: ${it.message}") }) {
+            is EditPlan.InPlace -> EditClassification.InPlace
+            is EditPlan.RequiresRewrite -> EditClassification.Rewrite(plan.reason)
+            is EditPlan.Rejected -> EditClassification.Rejected(plan.reason)
+        }
     }
 
     private fun matchHandler(source: ByteSource): FormatHandler? {
