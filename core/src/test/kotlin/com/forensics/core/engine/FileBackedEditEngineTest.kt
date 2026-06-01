@@ -64,4 +64,28 @@ class FileBackedEditEngineTest {
         }
         assertTrue(originalBytes.contentEquals(tmp.readBytes()))
     }
+
+    @Test fun realFileRewriteReplacesWholeFile() {
+        val original = TestExifJpeg.build(orientation = 1, dateTime = "2020:01:02 03:04:05", make = "ACME")
+        val rebuilt = TestExifJpeg.build(orientation = 1, dateTime = "2020:01:02 03:04:05", make = "LongerMakerName")
+        tmp.writeBytes(original)
+
+        RandomAccessFile(tmp, "rw").use { raf ->
+            val sink = FileChannelByteSink(raf.channel)
+            val src = FileChannelByteSource(raf.channel)
+            val field = handler.parse(src).first { it.key == "Make" }
+            val expected = Value.Text("LongerMakerName")
+            val plan = EditPlan.RequiresRewrite("longer", rebuilt)
+            val result = EditEngine(handler).apply(sink, plan, Guard.capture(src), field, expected)
+            assertTrue(result is EditResult.Success)
+        }
+
+        assertTrue(rebuilt.contentEquals(tmp.readBytes()))
+        RandomAccessFile(tmp, "r").use { raf ->
+            assertEquals(
+                Value.Text("LongerMakerName"),
+                handler.parse(FileChannelByteSource(raf.channel)).first { it.key == "Make" }.value,
+            )
+        }
+    }
 }
