@@ -7,12 +7,23 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ScrollableTabRow
+import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import com.forensics.core.app.EditClassification
+import com.forensics.core.app.FieldGroup
 import com.forensics.core.model.MetadataField
 import com.forensics.core.model.Value
 
@@ -20,19 +31,80 @@ import com.forensics.core.model.Value
 fun ForensicsScreen(
     state: UiState,
     onPick: () -> Unit,
-    onEditOrientation: (MetadataField, Int) -> Unit,
+    classify: (MetadataField, Value) -> EditClassification,
+    onApplyEdit: (MetadataField, Value) -> Unit,
 ) {
-    Column(Modifier.fillMaxSize().padding(16.dp)) {
+    var editing by remember { mutableStateOf<MetadataField?>(null) }
+    var tab by remember { mutableIntStateOf(0) }
+
+    Column(Modifier.fillMaxSize().padding(12.dp)) {
         Button(onClick = onPick) { Text("Open file") }
+
         state.identity?.let { id ->
             Text(id.displayName ?: "(unnamed)", style = MaterialTheme.typography.titleMedium)
-            Text("${id.sizeBytes ?: 0} bytes · ${state.handlerName ?: "unknown format"}")
+            Text(
+                "${id.sizeBytes ?: 0} bytes · ${id.mimeType ?: "?"} · ${state.handlerName ?: "unknown format"}",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Text(
+                "sha256: ${state.sha256.take(16)}…",
+                style = MaterialTheme.typography.bodySmall,
+                fontFamily = FontFamily.Monospace,
+            )
         }
-        state.message?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
-        HorizontalDivider(Modifier.padding(vertical = 8.dp))
-        LazyColumn(Modifier.fillMaxWidth()) {
-            items(state.fields) { field ->
-                MetadataRow(field, onEditOrientation)
+
+        if (state.identity != null) {
+            Card(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+                Text(
+                    "⚠ Edits modify your original file directly.",
+                    Modifier.padding(8.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+        }
+
+        state.message?.let {
+            Text(it, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(vertical = 4.dp))
+        }
+
+        if (state.identity != null) {
+            val titles = listOf("Metadata", "Hex", "Strings")
+            ScrollableTabRow(selectedTabIndex = tab) {
+                titles.forEachIndexed { i, t ->
+                    Tab(selected = tab == i, onClick = { tab = i }, text = { Text(t) })
+                }
+            }
+            when (tab) {
+                0 -> MetadataTab(state.groups, onEdit = { editing = it })
+                1 -> LabeledMonospace("First ${state.hexLines.size} hex lines", state.hexLines)
+                else -> LabeledMonospace("Strings (${state.strings.size})", state.strings)
+            }
+        }
+    }
+
+    editing?.let { field ->
+        EditDialog(
+            field = field,
+            classify = { v -> classify(field, v) },
+            onDismiss = { editing = null },
+            onConfirm = { v -> editing = null; onApplyEdit(field, v) },
+        )
+    }
+}
+
+@Composable
+private fun MetadataTab(groups: List<FieldGroup>, onEdit: (MetadataField) -> Unit) {
+    LazyColumn(Modifier.fillMaxWidth()) {
+        groups.forEach { group ->
+            item {
+                Text(
+                    group.name,
+                    Modifier.padding(top = 12.dp, bottom = 4.dp),
+                    style = MaterialTheme.typography.titleSmall,
+                )
+            }
+            items(group.fields) { field ->
+                FieldRow(field, onEdit)
                 HorizontalDivider()
             }
         }
@@ -40,19 +112,15 @@ fun ForensicsScreen(
 }
 
 @Composable
-private fun MetadataRow(field: MetadataField, onEditOrientation: (MetadataField, Int) -> Unit) {
+private fun FieldRow(field: MetadataField, onEdit: (MetadataField) -> Unit) {
     Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
         Text("${field.key} = ${valueText(field.value)}")
         Text(
-            "${field.group} · ${if (field.editable) "in-place ✓" else "read-only"}",
+            if (field.editable) "in-place ✓ · tap to edit" else "read-only 🔒",
             style = MaterialTheme.typography.bodySmall,
         )
-        if (field.key == "Orientation" && field.editable) {
-            Button(onClick = {
-                val current = (field.value as? Value.Integer)?.n?.toInt() ?: 1
-                val next = if (current >= 8) 1 else current + 1
-                onEditOrientation(field, next)
-            }) { Text("Cycle orientation") }
+        if (field.editable) {
+            Button(onClick = { onEdit(field) }, Modifier.padding(top = 2.dp)) { Text("Edit") }
         }
     }
 }

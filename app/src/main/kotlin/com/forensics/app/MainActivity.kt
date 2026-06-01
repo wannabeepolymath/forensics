@@ -37,7 +37,8 @@ class MainActivity : ComponentActivity() {
                     ForensicsScreen(
                         state = state,
                         onPick = { picker.launch(arrayOf("image/jpeg")) },
-                        onEditOrientation = { field, next -> vm.editOrientation(field, next) },
+                        classify = { field, value -> vm.preview(field, value) },
+                        onApplyEdit = { field, value -> vm.applyEdit(field, value) },
                     )
                 }
             }
