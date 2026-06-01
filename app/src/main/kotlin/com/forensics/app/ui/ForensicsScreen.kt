@@ -1,5 +1,6 @@
 package com.forensics.app.ui
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -33,9 +34,12 @@ fun ForensicsScreen(
     onPick: () -> Unit,
     classify: (MetadataField, Value) -> EditClassification,
     onApplyEdit: (MetadataField, Value) -> Unit,
+    onFocusBytes: (Long, Int) -> Unit,
 ) {
     var editing by remember { mutableStateOf<MetadataField?>(null) }
     var tab by remember { mutableIntStateOf(0) }
+    // Spotlight a byte range AND switch to the Hex tab in one gesture.
+    val focusInHex: (Long, Int) -> Unit = { offset, length -> onFocusBytes(offset, length); tab = 1 }
 
     Column(Modifier.fillMaxSize().padding(12.dp)) {
         Button(onClick = onPick) { Text("Open file") }
@@ -75,9 +79,15 @@ fun ForensicsScreen(
                 }
             }
             when (tab) {
-                0 -> MetadataTab(state.groups, onEdit = { editing = it })
-                1 -> LabeledMonospace("First ${state.hexLines.size} hex lines", state.hexLines)
-                else -> LabeledMonospace("Strings (${state.strings.size})", state.strings)
+                0 -> MetadataTab(state.groups, onEdit = { editing = it }, onFocusBytes = focusInHex)
+                1 -> HexView(
+                    lines = state.hexLines,
+                    pageStart = state.hexPageStart,
+                    focusOffset = state.focusOffset,
+                    focusLength = state.focusLength,
+                    fileSize = state.identity?.sizeBytes ?: 0L,
+                )
+                else -> StringsView(state.strings, state.stringsTruncated, onJump = focusInHex)
             }
         }
     }
@@ -93,7 +103,11 @@ fun ForensicsScreen(
 }
 
 @Composable
-private fun MetadataTab(groups: List<FieldGroup>, onEdit: (MetadataField) -> Unit) {
+private fun MetadataTab(
+    groups: List<FieldGroup>,
+    onEdit: (MetadataField) -> Unit,
+    onFocusBytes: (Long, Int) -> Unit,
+) {
     LazyColumn(Modifier.fillMaxWidth()) {
         groups.forEach { group ->
             item {
@@ -104,7 +118,7 @@ private fun MetadataTab(groups: List<FieldGroup>, onEdit: (MetadataField) -> Uni
                 )
             }
             items(group.fields) { field ->
-                FieldRow(field, onEdit)
+                FieldRow(field, onEdit, onFocusBytes)
                 HorizontalDivider()
             }
         }
@@ -112,13 +126,28 @@ private fun MetadataTab(groups: List<FieldGroup>, onEdit: (MetadataField) -> Uni
 }
 
 @Composable
-private fun FieldRow(field: MetadataField, onEdit: (MetadataField) -> Unit) {
+private fun FieldRow(
+    field: MetadataField,
+    onEdit: (MetadataField) -> Unit,
+    onFocusBytes: (Long, Int) -> Unit,
+) {
     Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
         Text("${field.key} = ${valueText(field.value)}")
         Text(
             if (field.editable) "in-place ✓ · tap to edit" else "read-only 🔒",
             style = MaterialTheme.typography.bodySmall,
         )
+        // Fields that map to real bytes (offset/length > 0) can be located in the hex view.
+        if (field.byteLength > 0) {
+            Text(
+                "▸ bytes 0x%08x (%d) — show in hex".format(field.byteOffset, field.byteLength),
+                style = MaterialTheme.typography.bodySmall,
+                fontFamily = FontFamily.Monospace,
+                modifier = Modifier
+                    .padding(top = 2.dp)
+                    .clickable { onFocusBytes(field.byteOffset, field.byteLength) },
+            )
+        }
         if (field.editable) {
             Button(onClick = { onEdit(field) }, Modifier.padding(top = 2.dp)) { Text("Edit") }
         }

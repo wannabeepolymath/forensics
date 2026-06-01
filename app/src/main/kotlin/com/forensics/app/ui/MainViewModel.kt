@@ -13,7 +13,9 @@ import com.forensics.core.app.EditClassification
 import com.forensics.core.app.FieldGroup
 import com.forensics.core.app.MetadataController
 import com.forensics.core.app.MetadataGrouping
+import com.forensics.core.generic.FoundString
 import com.forensics.core.generic.HexDump
+import com.forensics.core.generic.HexFocus
 import com.forensics.core.generic.Strings
 import com.forensics.core.handler.exif.JpegExifHandler
 import com.forensics.core.model.EditResult
@@ -33,7 +35,14 @@ data class UiState(
     val md5: String = "",
     val sha256: String = "",
     val hexLines: List<String> = emptyList(),
-    val strings: List<String> = emptyList(),
+    /** Absolute file offset of the first byte of [hexLines]; lets the hex view label real offsets. */
+    val hexPageStart: Long = 0,
+    val strings: List<FoundString> = emptyList(),
+    /** True when more than [STRINGS_LIMIT] strings exist and the list was capped. */
+    val stringsTruncated: Boolean = false,
+    /** Byte range to spotlight in the hex view (from a tapped field/string); null = nothing focused. */
+    val focusOffset: Long? = null,
+    val focusLength: Int = 0,
     val message: String? = null,
     val busy: Boolean = false,
 )
@@ -59,7 +68,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     val source = PfdByteSource(pfd)
                     val inspection = controller.inspect(source)
                     val hex = HexDump.page(source, 0, HEX_PREVIEW_BYTES)
-                    val strings = Strings.extract(source, 4).take(STRINGS_LIMIT).map { it.text }.toList()
+                    // Pull one extra so we can tell the user the list was capped without counting all.
+                    val foundStrings = Strings.extract(source, 4).take(STRINGS_LIMIT + 1).toList()
                     UiState(
                         identity = identity,
                         handlerName = inspection.handlerName,
@@ -70,11 +80,43 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         md5 = inspection.md5,
                         sha256 = inspection.sha256,
                         hexLines = hex,
-                        strings = strings,
+                        hexPageStart = 0,
+                        strings = foundStrings.take(STRINGS_LIMIT),
+                        stringsTruncated = foundStrings.size > STRINGS_LIMIT,
                     )
                 }
             }
             _state.value = next
+        }
+    }
+
+    /**
+     * Spotlight the byte range `[offset, offset+length)` in the hex view. If the current hex page
+     * already covers it, just records the focus (cheap, synchronous). Otherwise re-pages the hex
+     * around [offset] off the main thread so an offset anywhere in the file can be jumped to.
+     */
+    fun focusBytes(offset: Long, length: Int) {
+        val s = _state.value
+        if (HexFocus.pageContains(offset, s.hexPageStart, s.hexLines.size)) {
+            _state.value = s.copy(focusOffset = offset, focusLength = length)
+            return
+        }
+        val uri = currentUri ?: return
+        viewModelScope.launch {
+            val paged = withContext(Dispatchers.IO) {
+                val ctx = getApplication<Application>()
+                ctx.contentResolver.openFileDescriptor(uri, "r").use { pfd ->
+                    requireNotNull(pfd) { "could not open file" }
+                    val start = HexFocus.pageStartFor(offset, HEX_PREVIEW_BYTES)
+                    HexDump.page(PfdByteSource(pfd), start, HEX_PREVIEW_BYTES) to start
+                }
+            }
+            _state.value = _state.value.copy(
+                hexLines = paged.first,
+                hexPageStart = paged.second,
+                focusOffset = offset,
+                focusLength = length,
+            )
         }
     }
 

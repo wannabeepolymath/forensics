@@ -39,6 +39,7 @@ class MainActivity : ComponentActivity() {
                         onPick = { picker.launch(arrayOf("image/jpeg")) },
                         classify = { field, value -> vm.preview(field, value) },
                         onApplyEdit = { field, value -> vm.applyEdit(field, value) },
+                        onFocusBytes = { offset, length -> vm.focusBytes(offset, length) },
                     )
                 }
             }
